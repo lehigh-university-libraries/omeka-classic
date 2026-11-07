@@ -1,0 +1,94 @@
+---
+x-common: &common
+  restart: unless-stopped
+  networks:
+    default:
+
+networks:
+  default:
+
+volumes:
+  omeka-classic-files: {}
+
+secrets:
+  DB_ROOT_PASSWORD:
+    file: ./secrets/DB_ROOT_PASSWORD
+  OMEKA_CLASSIC_DB_PASSWORD:
+    file: ./secrets/OMEKA_CLASSIC_DB_PASSWORD
+  OMEKA_CLASSIC_ADMIN_PASSWORD:
+    file: ./secrets/OMEKA_CLASSIC_ADMIN_PASSWORD
+
+services:
+  init:
+    image: libops/base:3.2.2.0@sha256:aa0c61029734f3293bca068a95c72c0b07ac949292c446c83ada78e81a42c85d
+    restart: no
+    working_dir: /work
+    environment:
+      COMPOSE_FILE: /work/compose.yaml
+      SECRETS_ROOT: /work/secrets
+    volumes:
+      - ./certs:/work/certs:rw,z
+      - ./secrets:/work/secrets:rw,z
+      - ./compose.yaml:/work/compose.yaml:ro,z
+    entrypoint: generate-compose-secrets.sh
+    profiles: [none]
+
+  traefik:
+    <<: *common
+    image: traefik:v3.7.9@sha256:652929a140a32d7cafafb13c6cdfab5376cfeff800f51397b87b524501ed02a8
+    command:
+      - --ping=true
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.transport.respondingTimeouts.readTimeout=300s
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=300s
+    environment:
+      BACKEND_TLS_ENABLED: "${BACKEND_TLS_ENABLED:-false}"
+    ports:
+      - "443:443"
+    volumes:
+      - ./conf/traefik:/etc/traefik/dynamic:ro,z
+      - ./certs:/etc/traefik/certs:ro,z
+    depends_on:
+      omeka-classic:
+        condition: service_healthy
+    healthcheck:
+      test: traefik healthcheck --ping
+      start_period: 10s
+
+  omeka-classic:
+    <<: *common
+    build:
+      context: .
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      INGRESS_HOSTNAMES: "${INGRESS_HOSTNAMES:-localhost}"
+      INGRESS_SCHEME: "${INGRESS_SCHEME:-https}"
+      LIBOPS_SMTP_HOST: "${LIBOPS_SMTP_HOST:-host.docker.internal}"
+      LIBOPS_SMTP_PORT: "${LIBOPS_SMTP_PORT:-25}"
+      SMTP_FROM: "${SMTP_FROM:-}"
+      DB_HOST: ${DB_HOST:-mariadb}
+      DB_PORT: "${DB_PORT:-3306}"
+      DB_NAME: ${DB_NAME:-omeka_classic}
+      DB_USER: ${DB_USER:-omeka_classic}
+    secrets:
+      - source: OMEKA_CLASSIC_DB_PASSWORD
+        target: DB_PASSWORD
+      - source: OMEKA_CLASSIC_ADMIN_PASSWORD
+    volumes:
+      - omeka-classic-files:/var/www/omeka-classic/files:rw
+      - ./scripts/omeka-classic-rollout.sh:/usr/local/bin/omeka-classic-rollout:ro,z
+      - ./scripts/omeka-classic-verify-database.sh:/usr/local/bin/omeka-classic-verify-database:ro,z
+      - ./scripts/omeka-classic-verify-storage.sh:/usr/local/bin/omeka-classic-verify-storage:ro,z
+      - ./scripts/omeka-classic-database-config.php:/usr/local/share/libops/omeka-classic-database-config.php:ro,z
+      - ./scripts/omeka-classic-inspect.php:/usr/local/share/libops/omeka-classic-inspect.php:ro,z
+      - ./scripts/omeka-classic-verify.sql:/usr/local/share/libops/omeka-classic-verify.sql:ro,z
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /installed && test -f /var/www/omeka-classic/index.php && wget -q --spider http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 5m

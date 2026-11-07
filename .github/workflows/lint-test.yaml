@@ -1,0 +1,34 @@
+name: lint-test
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [local, external-mysql]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: make lint
+      - if: matrix.database == 'local'
+        run: cp compose.override-example.yaml compose.override.yaml
+      - if: matrix.database == 'external-mysql'
+        run: cp tests/compose.external-mysql.yaml compose.override.yaml
+      - run: make test
+      - name: Verify existing site after container recreation
+        run: |
+          docker compose up -d --force-recreate --wait --wait-timeout 1200 omeka-classic
+          ./scripts/test-site.sh
+      - if: failure()
+        run: docker compose logs

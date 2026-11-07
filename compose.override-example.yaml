@@ -1,0 +1,54 @@
+---
+volumes:
+  mariadb-data: {}
+
+services:
+  traefik:
+    ports:
+      - "80:80"
+  omeka-classic:
+    environment:
+      INGRESS_SCHEME: http
+      LIBOPS_SMTP_HOST: mailpit
+      LIBOPS_SMTP_PORT: "1025"
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+      mariadb:
+        condition: service_healthy
+  mailpit:
+    image: axllent/mailpit:v1.30@sha256:b868afa176bfd6cce2323ea316cd99ccad77915e51e595748f6d786700ecf109
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  database-init:
+    image: libops/base:3.2.2.0@sha256:aa0c61029734f3293bca068a95c72c0b07ac949292c446c83ada78e81a42c85d
+    restart: "no"
+    networks:
+      default:
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-omeka_classic}
+      DB_USER: ${DB_USER:-omeka_classic}
+      DB_CHARACTER_SET: utf8mb4
+      DB_COLLATION: utf8mb4_unicode_ci
+    secrets:
+      - source: DB_ROOT_PASSWORD
+      - source: OMEKA_CLASSIC_DB_PASSWORD
+        target: DB_PASSWORD
+    entrypoint: /usr/local/bin/init-database.sh
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  mariadb:
+    restart: unless-stopped
+    networks:
+      default:
+    image: lehighlts/mariadb:11.8.9
+    volumes:
+      - mariadb-data:/var/lib/mysql:rw
+    secrets:
+      - source: DB_ROOT_PASSWORD

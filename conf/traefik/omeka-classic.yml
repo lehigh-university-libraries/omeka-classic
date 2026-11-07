@@ -1,0 +1,18 @@
+http:
+  services:
+    omeka-classic:
+      loadBalancer:
+        servers:
+          - url: "http://omeka-classic:80"
+  routers:
+    omeka-classic-web:
+      rule: 'PathPrefix(`/`)'
+      entryPoints:
+        - web
+      service: omeka-classic
+    omeka-classic-secure:
+      rule: 'PathPrefix(`/`)'
+      entryPoints:
+        - websecure
+      service: omeka-classic
+      tls: {}
